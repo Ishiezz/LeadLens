@@ -130,6 +130,22 @@ router.post(
         if (row.step_key) ctx[row.step_key] = row.content;
       });
 
+      // Re-normalize context values based on flow step types
+      // (chat_messages stores everything as TEXT, but we need proper types for DB inserts)
+      flow.forEach(step => {
+        if (ctx[step.key] !== undefined) {
+          if (step.type === 'multiselect') {
+            ctx[step.key] = Array.isArray(ctx[step.key])
+              ? ctx[step.key]
+              : String(ctx[step.key]).split(',').map(s => s.trim());
+          } else if (step.type === 'number') {
+            ctx[step.key] = Number(ctx[step.key]);
+          } else if (step.type === 'boolean') {
+            ctx[step.key] = ['yes', 'true', '1'].includes(String(ctx[step.key]).toLowerCase());
+          }
+        }
+      });
+
       // Find current step (skip steps that should be skipped)
       let stepIndex = session.current_step;
       let currentStep = flow[stepIndex];

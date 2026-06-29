@@ -2,13 +2,14 @@ const { scoreFounder, scoreInvestor, scoreLabel } = require('../src/services/sco
 
 // ── scoreLabel ────────────────────────────────────────────────────────────────
 describe('scoreLabel()', () => {
-  it('returns "hot" for scores 80-100',   () => expect(scoreLabel(80)).toBe('hot'));
+  it('returns "hot" for scores 75-100',   () => expect(scoreLabel(75)).toBe('hot'));
   it('returns "hot" for score 100',       () => expect(scoreLabel(100)).toBe('hot'));
-  it('returns "good" for scores 60-79',   () => expect(scoreLabel(60)).toBe('good'));
-  it('returns "good" for score 79',       () => expect(scoreLabel(79)).toBe('good'));
-  it('returns "maybe" for scores 40-59',  () => expect(scoreLabel(40)).toBe('maybe'));
-  it('returns "low" for scores 0-39',     () => expect(scoreLabel(0)).toBe('low'));
-  it('returns "low" for score 39',        () => expect(scoreLabel(39)).toBe('low'));
+  it('returns "good" for scores 55-74',   () => expect(scoreLabel(55)).toBe('good'));
+  it('returns "good" for score 74',       () => expect(scoreLabel(74)).toBe('good'));
+  it('returns "maybe" for scores 35-54',  () => expect(scoreLabel(35)).toBe('maybe'));
+  it('returns "maybe" for score 54',      () => expect(scoreLabel(54)).toBe('maybe'));
+  it('returns "low" for scores 0-34',     () => expect(scoreLabel(0)).toBe('low'));
+  it('returns "low" for score 34',        () => expect(scoreLabel(34)).toBe('low'));
 });
 
 // ── scoreFounder ──────────────────────────────────────────────────────────────
@@ -31,17 +32,17 @@ describe('scoreFounder()', () => {
     customer_testimonials: 'CTO of Acme Corp says: saved us 15 hours per week and caught errors worth $3k.',
   };
 
-  it('gives a strong founder a score >= 70', () => {
+  it('gives a strong founder a score >= 75 (Hot)', () => {
     const { score } = scoreFounder(strongFounder);
-    expect(score).toBeGreaterThanOrEqual(70);
+    expect(score).toBeGreaterThanOrEqual(75);
   });
 
-  it('returns "hot" or "good" status for strong founder', () => {
+  it('returns "hot" status for strong founder', () => {
     const { status } = scoreFounder(strongFounder);
-    expect(['hot', 'good']).toContain(status);
+    expect(status).toBe('hot');
   });
 
-  it('gives a weak founder a score < 40', () => {
+  it('gives a weak founder a score < 35 (Low)', () => {
     const weakFounder = {
       problem_statement: 'Idea',
       solution_summary: 'App',
@@ -55,7 +56,28 @@ describe('scoreFounder()', () => {
       has_paying_customers: false,
     };
     const { score } = scoreFounder(weakFounder);
-    expect(score).toBeLessThan(40);
+    expect(score).toBeLessThan(35);
+  });
+
+  it('gives a decent early-stage founder a "good" or better status', () => {
+    const earlyStageFounder = {
+      problem_statement: 'Students struggle to find personalized learning paths that adapt to their pace and learning style in real time.',
+      solution_summary: 'An adaptive AI tutor that creates custom study plans and adjusts difficulty based on student performance metrics.',
+      mvp_status: 'Beta / Early users',
+      active_users: 200,
+      monthly_revenue: 2000,
+      growth_rate_pct: 15,
+      team_size: 3,
+      has_technical_cofounder: true,
+      role_in_startup: 'Founder / Co-founder',
+      funding_stage: 'Pre-Seed',
+      amount_raising_usd: 250000,
+      use_of_funds: 'Hire two engineers and launch marketing campaigns to reach 1000 users',
+      has_paying_customers: true,
+      customer_testimonials: 'Three schools are piloting our platform',
+    };
+    const { status } = scoreFounder(earlyStageFounder);
+    expect(['hot', 'good']).toContain(status);
   });
 
   it('returns a score_breakdown object with all dimensions', () => {
@@ -92,9 +114,9 @@ describe('scoreInvestor()', () => {
     num_deals_per_year: 8,
   };
 
-  it('gives a strong investor a score >= 70', () => {
+  it('gives a strong investor a score >= 75 (Hot)', () => {
     const { score } = scoreInvestor(strongInvestor);
-    expect(score).toBeGreaterThanOrEqual(70);
+    expect(score).toBeGreaterThanOrEqual(75);
   });
 
   it('returns expected dimensions in breakdown', () => {
@@ -117,6 +139,7 @@ describe('scoreInvestor()', () => {
     const passiveInvestor = {
       ...strongInvestor,
       support_type: ['Capital only'],
+      involvement_level: 'Passive (capital only)',
       deployment_timeline: 'Within 12 months',
       stage_focus: ['Series B+'],
     };
