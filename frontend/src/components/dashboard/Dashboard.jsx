@@ -236,21 +236,31 @@ function ScoreRingSmall({ score, status }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // LEAD ROW
 // ─────────────────────────────────────────────────────────────────────────────
-function LeadRow({ lead, onClick }) {
+function LeadRow({ lead, onClick, compareMode, isSelected, onToggleSelect }) {
   const cfg = STATUS[lead.status] || STATUS.low;
   return (
     <tr
-      onClick={() => onClick(lead)}
+      onClick={() => compareMode ? onToggleSelect(lead) : onClick(lead)}
       className="group cursor-pointer border-b border-slate-100 hover:bg-slate-50/80 transition-colors"
     >
-      {/* Avatar + Name */}
+      {/* Avatar or Checkbox */}
       <td className="px-4 py-3.5">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center flex-shrink-0">
-            <span className="text-[13px] font-semibold text-slate-600">
-              {lead.full_name?.[0]?.toUpperCase()}
-            </span>
-          </div>
+          {compareMode ? (
+            <input 
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggleSelect(lead)}
+              onClick={e => e.stopPropagation()}
+              className="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 border-slate-300 cursor-pointer"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center flex-shrink-0">
+              <span className="text-[13px] font-semibold text-slate-600">
+                {lead.full_name?.[0]?.toUpperCase()}
+              </span>
+            </div>
+          )}
           <div>
             <p className="text-[13px] font-semibold text-slate-800 group-hover:text-brand-600 transition-colors leading-tight">
               {lead.full_name}
@@ -299,6 +309,466 @@ function LeadRow({ lead, onClick }) {
         </span>
       </td>
     </tr>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPATIBILITY/MATCH ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+function getMatchScore(founder, investor) {
+  let score = 0;
+  const reasons = [];
+
+  // 1. Sector Focus Alignment (Max 40 points)
+  const preferredSectors = investor.preferred_sectors || [];
+  const industry = founder.industry;
+  const isAgnostic = preferredSectors.some(s => s.toLowerCase().includes('agnostic'));
+
+  if (isAgnostic) {
+    score += 40;
+    reasons.push('Sector Agnostic (40 pts)');
+  } else if (industry && preferredSectors.some(s => s.toLowerCase() === industry.toLowerCase())) {
+    score += 40;
+    reasons.push('Sector Match (40 pts)');
+  } else if (industry && preferredSectors.some(s => {
+    const keywords = s.toLowerCase().split(/[\s/]+/);
+    return keywords.some(k => k.length > 2 && industry.toLowerCase().includes(k));
+  })) {
+    score += 20;
+    reasons.push('Partial Sector Match (20 pts)');
+  } else {
+    reasons.push('No Sector Match (0 pts)');
+  }
+
+  // 2. Stage Focus Alignment (Max 30 points)
+  const stageFocus = investor.stage_focus || [];
+  const founderStage = founder.funding_stage;
+
+  const mapStages = (stage) => {
+    if (!stage) return [];
+    const lower = stage.toLowerCase();
+    if (lower.includes('pre-seed')) return ['pre-seed'];
+    if (lower.includes('seed')) return ['seed'];
+    if (lower.includes('series a')) return ['series a'];
+    if (lower.includes('series b')) return ['series b+'];
+    if (lower.includes('bootstrapped') || lower.includes('family')) return ['pre-seed', 'seed'];
+    return [];
+  };
+
+  const investorTargetStages = stageFocus.flatMap(s => mapStages(s));
+  const founderStages = mapStages(founderStage);
+  const stageOverlap = founderStages.some(fs => investorTargetStages.includes(fs));
+
+  if (stageOverlap) {
+    score += 30;
+    reasons.push('Stage Aligned (30 pts)');
+  } else {
+    reasons.push('Stage Mismatch (0 pts)');
+  }
+
+  // 3. Cheque Size Fit (Max 30 points)
+  const typicalCheque = Number(investor.typical_cheque_usd) || 0;
+  const minCheque = Number(investor.min_cheque_usd) || 0;
+  const maxCheque = Number(investor.max_cheque_usd) || 0;
+  const amountRaising = Number(founder.amount_raising_usd) || 0;
+
+  if (amountRaising > 0 && typicalCheque > 0) {
+    const isWithinRange = (minCheque > 0 && maxCheque > 0 && amountRaising >= minCheque && amountRaising <= maxCheque);
+    const isWithinTypical = (amountRaising >= typicalCheque * 0.5 && amountRaising <= typicalCheque * 2);
+
+    if (isWithinRange || isWithinTypical) {
+      score += 30;
+      reasons.push('Cheque Size Fit (30 pts)');
+    } else if (amountRaising < typicalCheque * 5) {
+      score += 15;
+      reasons.push('Cheque Size Partial Fit (15 pts)');
+    } else {
+      reasons.push('Cheque Size Mismatch (0 pts)');
+    }
+  } else {
+    score += 15;
+    reasons.push('Cheque Data Incomplete (15 pts)');
+  }
+
+  return { score, reasons };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUGGESTED MATCH PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+function MatchSuggestions({ leads, onOpenLead }) {
+  const [isOpen, setIsOpen] = useState(true);
+
+  const matches = React.useMemo(() => {
+    const founders = leads.filter(l => l.type === 'founder');
+    const investors = leads.filter(l => l.type === 'investor');
+    const list = [];
+    founders.forEach(f => {
+      investors.forEach(i => {
+        const res = getMatchScore(f, i);
+        if (res.score >= 50) {
+          list.push({ founder: f, investor: i, score: res.score, reasons: res.reasons });
+        }
+      });
+    });
+    return list.sort((a, b) => b.score - a.score).slice(0, 3);
+  }, [leads]);
+
+  if (matches.length === 0) return null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-card overflow-hidden transition-all animate-fadeIn">
+      <button 
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-5 py-4 flex items-center justify-between border-b border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[14px]">🤝</span>
+          <p className="text-[13px] font-bold text-slate-800">Suggested Partner Matches</p>
+          <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-100">
+            {matches.length} Match{matches.length > 1 ? 'es' : ''}
+          </span>
+        </div>
+        <div className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''} text-slate-500`}>
+          <ChevronIcon dir="down" />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="p-5 divide-y divide-slate-100">
+          {matches.map((m, idx) => (
+            <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
+              <div className="flex items-center gap-4 flex-1">
+                {/* Founder Card */}
+                <div 
+                  onClick={() => onOpenLead(m.founder)}
+                  className="flex-1 bg-slate-50 rounded-xl p-3 border border-slate-100 hover:border-brand-300 hover:bg-white cursor-pointer transition-all group"
+                >
+                  <p className="text-[10px] font-bold text-brand-600 uppercase mb-1">🚀 Founder / Startup</p>
+                  <p className="text-[13px] font-bold text-slate-800 group-hover:text-brand-600 transition-colors">{m.founder.full_name}</p>
+                  <p className="text-[11px] text-slate-500 font-medium">{m.founder.startup_name} · <span className="text-slate-400">{m.founder.industry}</span></p>
+                </div>
+
+                {/* Match indicator */}
+                <div className="flex flex-col items-center justify-center px-2 flex-shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center shadow-sm">
+                    <span className="text-[12px] font-bold text-emerald-700">{m.score}%</span>
+                  </div>
+                  <span className="text-[9px] text-slate-400 font-bold mt-1">MATCH</span>
+                </div>
+
+                {/* Investor Card */}
+                <div 
+                  onClick={() => onOpenLead(m.investor)}
+                  className="flex-1 bg-slate-50 rounded-xl p-3 border border-slate-100 hover:border-brand-300 hover:bg-white cursor-pointer transition-all group"
+                >
+                  <p className="text-[10px] font-bold text-orange-600 uppercase mb-1">💼 Investor / Firm</p>
+                  <p className="text-[13px] font-bold text-slate-800 group-hover:text-brand-600 transition-colors">{m.investor.full_name}</p>
+                  <p className="text-[11px] text-slate-500 font-medium">{m.investor.firm_name} · <span className="text-slate-400">${Number(m.investor.typical_cheque_usd).toLocaleString()} cheque</span></p>
+                </div>
+              </div>
+
+              {/* Match reasons */}
+              <div className="flex flex-wrap gap-1.5 md:max-w-xs justify-end">
+                {m.reasons.map((r, i) => {
+                  const isPositive = !r.includes('No ') && !r.includes('Mismatch') && !r.includes('Incomplete');
+                  if (!isPositive) return null;
+                  return (
+                    <span key={i} className="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                      ✓ {r.split(' (')[0]}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPARE RADAR (for overlays)
+// ─────────────────────────────────────────────────────────────────────────────
+function CompareRadar({ breakdownA, breakdownB }) {
+  const entriesA = Object.entries(breakdownA || {});
+  
+  if (entriesA.length < 3) return null;
+  const cx = 70, cy = 70, R = 52;
+  const n = entriesA.length;
+  const angles = entriesA.map((_, i) => (2 * Math.PI * i) / n - Math.PI / 2);
+  const meta = e => DIMENSION_META[e[0]] || { max: 20 };
+
+  const ptsA = entriesA.map((e, i) => {
+    const r = Math.min(e[1] / meta(e).max, 1) * R;
+    return `${cx + r * Math.cos(angles[i])},${cy + r * Math.sin(angles[i])}`;
+  });
+
+  const ptsB = entriesA.map((e, i) => {
+    const val = breakdownB[e[0]] || 0;
+    const r = Math.min(val / meta(e).max, 1) * R;
+    return `${cx + r * Math.cos(angles[i])},${cy + r * Math.sin(angles[i])}`;
+  });
+
+  const gridPts = lv => angles.map(a => `${cx + lv * R * Math.cos(a)},${cy + lv * R * Math.sin(a)}`).join(' ');
+
+  return (
+    <svg viewBox="0 0 140 140" className="w-full">
+      {[0.33, 0.66, 1].map(l => <polygon key={l} points={gridPts(l)} fill="none" stroke="#e2e8f0" strokeWidth="1" />)}
+      {angles.map((a, i) => <line key={i} x1={cx} y1={cy} x2={cx + R * Math.cos(a)} y2={cy + R * Math.sin(a)} stroke="#e2e8f0" strokeWidth="1" />)}
+
+      {/* Lead A - Blue */}
+      <polygon points={ptsA.join(' ')} fill="rgba(59,130,246,0.12)" stroke="#3b82f6" strokeWidth="1.5" strokeLinejoin="round" />
+
+      {/* Lead B - Amber */}
+      <polygon points={ptsB.join(' ')} fill="rgba(245,158,11,0.12)" stroke="#f59e0b" strokeWidth="1.5" strokeLinejoin="round" />
+
+      {/* Mini dots */}
+      {ptsA.map((p, i) => {
+        const [x, y] = p.split(',');
+        return <circle key={`a-${i}`} cx={x} cy={y} r="2" fill="#3b82f6" />;
+      })}
+      {ptsB.map((p, i) => {
+        const [x, y] = p.split(',');
+        return <circle key={`b-${i}`} cx={x} cy={y} r="2" fill="#f59e0b" />;
+      })}
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPARE MODAL (side-by-side)
+// ─────────────────────────────────────────────────────────────────────────────
+function CompareModal({ leadA, leadB, onClose }) {
+  const breakdownA = leadA.score_breakdown || {};
+  const breakdownB = leadB.score_breakdown || {};
+  const sameType = leadA.type === leadB.type;
+
+  const fieldsToCompare = sameType 
+    ? (leadA.type === 'founder' 
+      ? [
+          { key: 'startup_name', label: 'Startup Name' },
+          { key: 'industry', label: 'Industry' },
+          { key: 'funding_stage', label: 'Funding Stage' },
+          { key: 'amount_raising_usd', label: 'Raising (USD)', isCurrency: true },
+          { key: 'mvp_status', label: 'MVP Status' },
+          { key: 'active_users', label: 'Active Users' },
+          { key: 'monthly_revenue', label: 'MRR (USD)', isCurrency: true },
+          { key: 'growth_rate_pct', label: 'Growth Rate', isPct: true },
+          { key: 'team_size', label: 'Team Size' },
+          { key: 'has_technical_cofounder', label: 'Technical Co-founder', isBool: true },
+          { key: 'has_paying_customers', label: 'Paying Customers', isBool: true },
+        ]
+      : [
+          { key: 'firm_name', label: 'Firm Name' },
+          { key: 'typical_cheque_usd', label: 'Typical Cheque', isCurrency: true },
+          { key: 'min_cheque_usd', label: 'Min Cheque', isCurrency: true },
+          { key: 'max_cheque_usd', label: 'Max Cheque', isCurrency: true },
+          { key: 'stage_focus', label: 'Stage Focus', isArray: true },
+          { key: 'preferred_sectors', label: 'Preferred Sectors', isArray: true },
+          { key: 'portfolio_size', label: 'Portfolio Size' },
+          { key: 'geography_focus', label: 'Geography Focus', isArray: true },
+          { key: 'support_type', label: 'Support Value', isArray: true },
+          { key: 'involvement_level', label: 'Involvement Level' },
+          { key: 'deployment_timeline', label: 'Deployment Timeline' },
+        ])
+    : [
+        { key: 'startup_name', label: 'Startup / Firm Name', otherKey: 'firm_name' },
+        { key: 'industry', label: 'Industry / Preferred Sectors', otherKey: 'preferred_sectors', isArrayB: true },
+        { key: 'funding_stage', label: 'Stage / Focus Stages', otherKey: 'stage_focus', isArrayB: true },
+        { key: 'amount_raising_usd', label: 'Raising / Typical Cheque', otherKey: 'typical_cheque_usd', isCurrency: true },
+      ];
+
+  const fmtVal = (val, opt = {}) => {
+    if (val === null || val === undefined) return '—';
+    if (opt.isBool) return val ? 'Yes' : 'No';
+    if (opt.isArray) return Array.isArray(val) ? val.join(', ') : String(val);
+    if (opt.isCurrency) return `$${Number(val).toLocaleString()}`;
+    if (opt.isPct) return `${val}%`;
+    return String(val);
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-slate-50 w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-modal overflow-hidden flex flex-col animate-slideUp"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-4 bg-white border-b border-slate-200/80 flex items-center justify-between">
+          <div>
+            <h2 className="text-[16px] font-bold text-slate-900">Lead Comparison</h2>
+            <p className="text-[12px] text-slate-500">Comparing {leadA.full_name} and {leadB.full_name}</p>
+          </div>
+          <button 
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center transition-colors text-slate-500 bg-white border border-slate-200 shadow-sm"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Top Cards */}
+          <div className="grid grid-cols-2 gap-6">
+            {[leadA, leadB].map((l, idx) => (
+              <div key={idx} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-1.5" style={{ backgroundColor: idx === 1 ? '#f59e0b' : '#3b82f6' }} />
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center">
+                      <span className="text-[15px] font-bold text-slate-700">{l.full_name[0].toUpperCase()}</span>
+                    </div>
+                    <div>
+                      <p className="text-[14px] font-bold text-slate-800 leading-tight">{l.full_name}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{l.email}</p>
+                    </div>
+                  </div>
+                  <ScoreRingSmall score={l.score} status={l.status} />
+                </div>
+                <div className="flex gap-2">
+                  <StatusBadge status={l.status} size="sm" />
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                    l.type === 'founder' ? 'bg-brand-50 text-brand-700 border-brand-200' : 'bg-orange-50 text-orange-700 border-orange-200'
+                  }`}>
+                    {l.type === 'founder' ? '🚀 Founder' : '💼 Investor'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Radar and Scores */}
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col items-center">
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-4 w-full">Opportunity Radar</p>
+              {sameType ? (
+                <div className="w-52 h-52">
+                  <CompareRadar breakdownA={breakdownA} breakdownB={breakdownB} />
+                </div>
+              ) : (
+                <div className="flex gap-4 justify-around w-full">
+                  <div className="w-24 h-24 text-center">
+                    <p className="text-[9px] font-semibold text-slate-400 mb-1 truncate max-w-[80px]">{leadA.full_name}</p>
+                    <MiniRadar breakdown={breakdownA} />
+                  </div>
+                  <div className="w-24 h-24 text-center">
+                    <p className="text-[9px] font-semibold text-slate-400 mb-1 truncate max-w-[80px]">{leadB.full_name}</p>
+                    <MiniRadar breakdown={breakdownB} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-4">Qualification Breakdown</p>
+              <div className="space-y-3">
+                {sameType ? (
+                  Object.keys(DIMENSION_META)
+                    .filter(k => breakdownA[k] !== undefined || breakdownB[k] !== undefined)
+                    .map(k => {
+                      const meta = DIMENSION_META[k];
+                      const pctA = Math.round((breakdownA[k] / meta.max) * 100) || 0;
+                      const pctB = Math.round((breakdownB[k] / meta.max) * 100) || 0;
+                      return (
+                        <div key={k} className="space-y-1">
+                          <div className="flex justify-between text-[11px] font-medium text-slate-600">
+                            <span>{meta.icon} {meta.label}</span>
+                            <span className="font-mono text-[10px]">
+                              <span className="text-blue-500 font-bold">{breakdownA[k] || 0}</span>
+                              <span className="text-slate-300 mx-1">/</span>
+                              <span className="text-amber-500 font-bold">{breakdownB[k] || 0}</span>
+                            </span>
+                          </div>
+                          <div className="h-2 bg-slate-100 rounded-full flex overflow-hidden">
+                            <div className="h-full bg-blue-500 transition-all" style={{ width: `${pctA / 2}%` }} />
+                            <div className="h-full bg-amber-500 transition-all border-l border-white" style={{ width: `${pctB / 2}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 divide-x divide-slate-100">
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold text-blue-500 uppercase truncate">{leadA.full_name}</p>
+                      {Object.keys(breakdownA).map(k => {
+                        const meta = DIMENSION_META[k] || { icon: '•', label: k, max: 20 };
+                        return (
+                          <div key={k} className="text-[10px] pr-2">
+                            <div className="flex justify-between text-slate-500 font-medium">
+                              <span className="truncate max-w-[80px]">{meta.label}</span>
+                              <span className="font-mono">{breakdownA[k]}/{meta.max}</span>
+                            </div>
+                            <div className="h-1 bg-slate-100 rounded-full overflow-hidden mt-0.5">
+                              <div className="h-full bg-blue-500" style={{ width: `${(breakdownA[k] / meta.max) * 100}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="space-y-2 pl-4">
+                      <p className="text-[10px] font-bold text-amber-500 uppercase truncate">{leadB.full_name}</p>
+                      {Object.keys(breakdownB).map(k => {
+                        const meta = DIMENSION_META[k] || { icon: '•', label: k, max: 20 };
+                        return (
+                          <div key={k} className="text-[10px]">
+                            <div className="flex justify-between text-slate-500 font-medium">
+                              <span className="truncate max-w-[80px]">{meta.label}</span>
+                              <span className="font-mono">{breakdownB[k]}/{meta.max}</span>
+                            </div>
+                            <div className="h-1 bg-slate-100 rounded-full overflow-hidden mt-0.5">
+                              <div className="h-full bg-amber-500" style={{ width: `${(breakdownB[k] / meta.max) * 100}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Profile comparison table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/50 border-b border-slate-200">
+                  <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-widest w-1/3">Profile Metric</th>
+                  <th className="px-5 py-3 text-[11px] font-bold text-blue-500 uppercase tracking-widest w-1/3">{leadA.full_name}</th>
+                  <th className="px-5 py-3 text-[11px] font-bold text-amber-500 uppercase tracking-widest w-1/3">{leadB.full_name}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {fieldsToCompare.map((f, i) => {
+                  const valA = leadA[f.key];
+                  const valB = sameType ? leadB[f.key] : leadB[f.otherKey];
+
+                  return (
+                    <tr key={i} className="hover:bg-slate-50/20">
+                      <td className="px-5 py-3 text-[12px] font-semibold text-slate-500">{f.label}</td>
+                      <td className="px-5 py-3 text-[13px] font-semibold text-slate-800">
+                        {fmtVal(valA, { isBool: f.isBool, isArray: f.isArray || f.isArrayA, isCurrency: f.isCurrency, isPct: f.isPct })}
+                      </td>
+                      <td className="px-5 py-3 text-[13px] font-semibold text-slate-800">
+                        {fmtVal(valB, { isBool: f.isBool, isArray: f.isArray || f.isArrayB, isCurrency: f.isCurrency, isPct: f.isPct })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -463,7 +933,6 @@ function LeadModal({ lead, onClose, onToast }) {
     { icon: '📞', label: 'Meeting scheduled',      time: null,            done: false },
   ];
 
-  return (
   const strengths = Object.entries(breakdown || {})
     .filter(([k,v]) => DIMENSION_META[k] && (v/DIMENSION_META[k].max) >= 0.75)
     .map(([k]) => DIMENSION_META[k]?.label);
@@ -531,6 +1000,79 @@ function LeadModal({ lead, onClose, onToast }) {
 
         {/* Tab content (Replaced with Single Scrollable View) */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+          {/* ── Why This Status? Explainer ── */}
+          {(() => {
+            const statusConfig = STATUS[lead.status] || STATUS.low;
+            const dims = Object.entries(breakdown)
+              .filter(([k]) => DIMENSION_META[k])
+              .map(([k, v]) => ({ key: k, label: DIMENSION_META[k].label, score: v, max: DIMENSION_META[k].max, pct: Math.round((v / DIMENSION_META[k].max) * 100) }))
+              .sort((a, b) => b.pct - a.pct);
+            
+            const topStrengths = dims.filter(d => d.pct >= 70).slice(0, 3);
+            const topWeaknesses = dims.filter(d => d.pct < 40).slice(0, 3);
+            
+            const statusMessages = {
+              hot: `${lead.full_name} is a high-priority ${lead.type} lead scoring ${lead.score}/100.`,
+              good: `${lead.full_name} shows strong potential as a ${lead.type} lead with a score of ${lead.score}/100.`,
+              maybe: `${lead.full_name} is a moderate-priority ${lead.type} lead scoring ${lead.score}/100 — worth monitoring.`,
+              low: `${lead.full_name} is currently a low-priority ${lead.type} lead at ${lead.score}/100.`,
+            };
+
+            const strengthText = topStrengths.length > 0
+              ? `Strong in ${topStrengths.map(d => d.label).join(', ')}.`
+              : '';
+            const weaknessText = topWeaknesses.length > 0
+              ? `Areas to improve: ${topWeaknesses.map(d => d.label).join(', ')}.`
+              : '';
+
+            const actionMessages = {
+              hot: 'Recommended action: Schedule a call this week.',
+              good: 'Recommended action: Add to follow-up pipeline.',
+              maybe: 'Recommended action: Monitor for progress updates.',
+              low: 'Recommended action: Keep in backlog for now.',
+            };
+
+            return dims.length > 0 ? (
+              <div className={`rounded-2xl p-5 border shadow-sm ${
+                lead.status === 'hot' ? 'bg-gradient-to-r from-red-50 to-orange-50 border-red-200/60' :
+                lead.status === 'good' ? 'bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-200/60' :
+                lead.status === 'maybe' ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200/60' :
+                'bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200'
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[16px]">{statusConfig.emoji}</span>
+                  <p className="text-[12px] font-bold text-slate-700 uppercase tracking-widest">
+                    Why {statusConfig.label}?
+                  </p>
+                </div>
+                <p className="text-[13px] text-slate-700 leading-relaxed">
+                  {statusMessages[lead.status] || statusMessages.low}{' '}
+                  {strengthText}{' '}
+                  {weaknessText}{' '}
+                  {actionMessages[lead.status] || ''}
+                </p>
+
+                {/* Score dimension mini-bars */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-4">
+                  {dims.map(d => (
+                    <div key={d.key} className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500 font-medium w-20 truncate">{d.label}</span>
+                      <div className="flex-1 h-1.5 bg-white/60 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            d.pct >= 75 ? 'bg-emerald-500' : d.pct >= 50 ? 'bg-amber-400' : 'bg-red-400'
+                          }`}
+                          style={{ width: `${d.pct}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono font-bold text-slate-600 w-8 text-right">{d.score}/{d.max}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null;
+          })()}
           
           {/* Qualification Summary */}
           <div className="grid md:grid-cols-2 gap-4">
@@ -690,6 +1232,33 @@ export default function Dashboard() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [toast, setToast]   = useState(null);
   const searchRef = useRef(null);
+
+  // ── Compare mode state ──
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedForCompare, setSelectedForCompare] = useState([]);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+
+  // ── All leads for matching engine ──
+  const [allLeads, setAllLeads] = useState([]);
+  useEffect(() => {
+    api.getAllLeads()
+      .then(res => setAllLeads(res.data || []))
+      .catch(() => {});
+  }, [leads]); // refresh when paginated leads change (e.g. new lead added)
+
+  const toggleCompareSelect = useCallback((lead) => {
+    setSelectedForCompare(prev => {
+      const exists = prev.find(l => l.id === lead.id && l.type === lead.type);
+      if (exists) return prev.filter(l => !(l.id === lead.id && l.type === lead.type));
+      if (prev.length >= 2) return prev; // max 2
+      return [...prev, lead];
+    });
+  }, []);
+
+  const exitCompareMode = useCallback(() => {
+    setCompareMode(false);
+    setSelectedForCompare([]);
+  }, []);
 
   // Debounced search
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -863,6 +1432,11 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* ── Suggested Matches Section ── */}
+        {allLeads.length > 0 && (
+          <MatchSuggestions leads={allLeads} onOpenLead={openLead} />
+        )}
+
         {/* Leads Table */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-card overflow-hidden">
 
@@ -916,6 +1490,21 @@ export default function Dashboard() {
                   Clear
                 </button>
               )}
+
+              {/* Compare Toggle */}
+              <button
+                onClick={() => compareMode ? exitCompareMode() : setCompareMode(true)}
+                className={`px-3 py-2 text-[12px] font-semibold rounded-xl border transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                  compareMode
+                    ? 'bg-brand-50 text-brand-700 border-brand-300 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                </svg>
+                {compareMode ? 'Exit Compare' : 'Compare'}
+              </button>
             </div>
 
             {/* Active filter chips */}
@@ -954,7 +1543,14 @@ export default function Dashboard() {
                       </tr>
                     )
                     : leads.map(lead => (
-                      <LeadRow key={lead.id} lead={lead} onClick={openLead} />
+                      <LeadRow
+                        key={lead.id}
+                        lead={lead}
+                        onClick={openLead}
+                        compareMode={compareMode}
+                        isSelected={selectedForCompare.some(l => l.id === lead.id && l.type === lead.type)}
+                        onToggleSelect={toggleCompareSelect}
+                      />
                     ))
                 }
               </tbody>
@@ -990,6 +1586,49 @@ export default function Dashboard() {
           </div>
         </div>
       </main>
+
+      {/* Floating Compare Bar */}
+      {compareMode && selectedForCompare.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 animate-slideUp">
+          <div className="bg-slate-900 text-white rounded-2xl shadow-modal px-5 py-3 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              {selectedForCompare.map((l, i) => (
+                <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 text-[12px] font-semibold">
+                  {l.full_name}
+                  <button
+                    onClick={() => toggleCompareSelect(l)}
+                    className="hover:text-red-300 transition-colors"
+                  >
+                    <CloseIcon size={10} />
+                  </button>
+                </span>
+              ))}
+              {selectedForCompare.length < 2 && (
+                <span className="text-[11px] text-slate-400">Select {2 - selectedForCompare.length} more…</span>
+              )}
+            </div>
+            <button
+              disabled={selectedForCompare.length < 2}
+              onClick={() => setShowCompareModal(true)}
+              className="px-4 py-2 rounded-xl bg-brand-500 text-white text-[12px] font-bold hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              Compare
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Compare Modal */}
+      {showCompareModal && selectedForCompare.length === 2 && (
+        <CompareModal
+          leadA={selectedForCompare[0]}
+          leadB={selectedForCompare[1]}
+          onClose={() => {
+            setShowCompareModal(false);
+            exitCompareMode();
+          }}
+        />
+      )}
 
       {/* Lead Modal */}
       {selectedLead && (

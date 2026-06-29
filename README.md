@@ -1,4 +1,4 @@
-# LeadLens — Lead Qualification Chatbot
+# LeadLens — Founder & Investor Intake Platform
 
 > A full-stack conversational chatbot that qualifies inbound enquiries from founders and investors, scores them 0–100, and surfaces them on a live ERP dashboard for the LeadLens team.
 

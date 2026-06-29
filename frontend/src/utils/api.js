@@ -21,6 +21,7 @@ export const api = {
 
   // Leads
   getLeads     : (params = {})        => apiFetch(`/leads?${new URLSearchParams(params)}`),
+  getAllLeads  : ()                   => apiFetch('/leads?limit=100'),
   getLead      : (type, id)           => apiFetch(`/leads/${type}/${id}`),
   updateNotes  : (type, id, notes)    => apiFetch(`/leads/${type}/${id}/notes`, {
     method: 'PATCH',
