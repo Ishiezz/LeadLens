@@ -1,6 +1,6 @@
 # LeadLens API — Documentation
 
-**Base URL:** `https://leadlens-api.railway.app/api`  
+**Base URL:** `https://leadlens-production-f783.up.railway.app/api` (Local fallback: `http://localhost:4000/api`)  
 **Format:** All requests and responses are JSON.  
 **Auth:** No auth required on chat endpoints (rate limited). Dashboard endpoints use CORS origin check.
 

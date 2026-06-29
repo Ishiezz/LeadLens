@@ -25,9 +25,11 @@
 
 | Surface     | URL                              |
 |-------------|----------------------------------|
-| Chatbot     | `https://leadlens.vercel.app/` |
-| Dashboard   | `https://leadlens.vercel.app/dashboard` |
-| API Health  | `https://leadlens-api.railway.app/health` |
+| Chatbot     | `https://lead-lens-eight.vercel.app` |
+| Dashboard   | `https://lead-lens-eight.vercel.app/dashboard` |
+| API Health  | `https://leadlens-production-f783.up.railway.app/health` |
+| Database    | PostgreSQL on Railway            |
+| Demo Video  | `[Link to be added manually]`    |
 
 ---
 
@@ -119,8 +121,8 @@
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-username/leadlens-chatbot.git
-cd leadlens-chatbot
+git clone https://github.com/Ishiezz/LeadLens.git
+cd LeadLens
 ```
 
 ### 2. Set up the database
@@ -446,7 +448,7 @@ npm run build
 # Set environment variables:
 #   NODE_ENV=production
 #   DATABASE_URL=<auto-provided by Railway PostgreSQL plugin>
-#   ALLOWED_ORIGINS=https://your-vercel-app.vercel.app
+#   ALLOWED_ORIGINS=https://lead-lens-eight.vercel.app
 #   PORT=4000 (Railway handles this automatically)
 ```
 
@@ -501,3 +503,15 @@ leadlens/
             └── dashboard/
                 └── Dashboard.jsx     # ERP dashboard
 ```
+
+---
+
+## License
+
+Distributed under the **MIT License**. See `LICENSE` for more information.
+
+---
+
+<p align="center">
+  Made with ❤️ by Ishasingh · Let's qualify deal flow at scale! 🚀
+</p>
