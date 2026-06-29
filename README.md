@@ -29,7 +29,7 @@
 | Dashboard   | `https://lead-lens-eight.vercel.app/dashboard` |
 | API Health  | `https://leadlens-production-f783.up.railway.app/health` |
 | Database    | PostgreSQL on Railway            |
-| Demo Video  | `[Link to be added manually]`    |
+| Demo Video  | `https://drive.google.com/file/d/1LIDEu91NfURhHx6XLwkI6CKbJeZ3v-F6/view?usp=sharing`    |
 
 ---
 
